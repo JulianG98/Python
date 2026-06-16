@@ -5,7 +5,7 @@ Generiert Videos/Bilder via Higgsfield und veröffentlicht diese auf Instagram.
 """
 
 from .base import BaseAgent
-from tools import higgsfield, instagram
+from tools import higgsfield, instagram, telegram
 
 
 SYSTEM_PROMPT = """Du bist ein Social Media Content Manager, spezialisiert auf Instagram.
@@ -94,6 +94,17 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "send_telegram_notification",
+        "description": "Sendet eine Telegram-Benachrichtigung (z.B. nach erfolgreichem Instagram-Post).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "Benachrichtigungstext"},
+            },
+            "required": ["message"],
+        },
+    },
 ]
 
 
@@ -109,6 +120,7 @@ class ContentAgent(BaseAgent):
                 "post_video_to_instagram": lambda video_url, caption: instagram.post_video(video_url, caption),
                 "get_account_insights": lambda: instagram.get_account_insights(),
                 "get_recent_posts": lambda limit=10: instagram.get_recent_posts(limit),
+                "send_telegram_notification": lambda message: telegram.send_status(message),
             },
         )
 
@@ -120,7 +132,8 @@ Schritte:
 2. Generiere den Content ({content_type})
 3. Verfasse eine ansprechende deutsche Instagram-Caption mit 15-25 relevanten Hashtags
 4. Poste den Content auf Instagram
-5. Bestätige den erfolgreichen Post mit dem Link
+5. Sende eine Telegram-Benachrichtigung mit: "✅ Instagram-Post veröffentlicht!\nThema: {topic}\n[Instagram-Link]"
+6. Bestätige den erfolgreichen Post
 
 Content-Typ: {"Reel (9:16, 5-8 Sekunden)" if content_type == "video" else "Feed-Bild (1:1)"}"""
 

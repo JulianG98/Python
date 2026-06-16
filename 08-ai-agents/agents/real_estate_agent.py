@@ -3,11 +3,12 @@ Immobilien-Such-Agent – Off-Market Parzellen in Kanton Bern.
 
 Sucht nach alten EFH auf großen Parzellen (900-2000 m²), die von MFH umgeben sind.
 Ziel: Direktkontakt mit Eigentümern vor dem Verkaufsentscheid.
+Sendet Luftbilder + Rapport automatisch via Telegram.
 """
 
 import os
 from .base import BaseAgent
-from tools import geogis_be
+from tools import geogis_be, telegram
 
 
 SYSTEM_PROMPT = """Du bist ein Immobilien-Analyse-Agent, spezialisiert auf Off-Market
@@ -19,8 +20,9 @@ Deine Aufgabe:
 3. Prüfe ob die Umgebung zu ≥60% mit Mehrfamilienhäusern (MFH) bebaut ist
 4. Prüfe ob das Gelände flach ist (Hangneigung < 15%)
 5. Prüfe ob die Parzelle gut erschlossen ist (Strasse vorhanden)
-6. Für qualifizierte Parzellen: Analysiere das Baureglement
-7. Erstelle einen detaillierten Report mit Grundbuch-Link für direkte Eigentümerkontakt
+6. Für qualifizierte Parzellen: hole Grundbuch-Info
+7. Sende qualifizierte Parzellen via Telegram (Luftbild + GPS + Rapport)
+8. Erstelle einen Abschluss-Report aller Funde
 
 Sei systematisch, präzise und erkläre deine Bewertung klar auf Deutsch.
 Fokus: Parzellen mit hohem Nachverdichtungs-Potenzial für den Auftraggeber."""
@@ -66,6 +68,39 @@ TOOLS = [
             "required": ["lat", "lng", "gemeinde"],
         },
     },
+    {
+        "name": "send_telegram_rapport",
+        "description": "Sendet Swisstopo-Luftbild, GPS-Pin und formatierten Rapport für eine qualifizierte Parzelle via Telegram.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "parcel": {
+                    "type": "object",
+                    "description": "Parzell-Analyse-Dict aus analyze_parcel",
+                },
+                "regulations": {
+                    "type": "object",
+                    "description": "Optionale Baureglement-Daten",
+                },
+                "potential": {
+                    "type": "object",
+                    "description": "Optionale Entwicklungspotenzial-Daten",
+                },
+            },
+            "required": ["parcel"],
+        },
+    },
+    {
+        "name": "send_telegram_status",
+        "description": "Sendet eine kurze Status-Meldung via Telegram (z.B. 'Suche gestartet', 'X Parzellen gefunden').",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string"},
+            },
+            "required": ["message"],
+        },
+    },
 ]
 
 
@@ -81,6 +116,22 @@ def _get_grundbuch_info(lat: float, lng: float, gemeinde: str) -> dict:
     return geogis_be.get_parcel_grundbuch_link(lat, lng, gemeinde)
 
 
+def _send_telegram_rapport(parcel: dict, regulations: dict | None = None, potential: dict | None = None) -> dict:
+    try:
+        results = telegram.send_parcel_rapport(parcel, regulations, potential)
+        return {"sent": True, "messages": len(results), "details": results}
+    except Exception as e:
+        return {"sent": False, "error": str(e)}
+
+
+def _send_telegram_status(message: str) -> dict:
+    try:
+        telegram.send_status(message)
+        return {"sent": True}
+    except Exception as e:
+        return {"sent": False, "error": str(e)}
+
+
 class RealEstateAgent(BaseAgent):
     def __init__(self):
         super().__init__(
@@ -90,6 +141,8 @@ class RealEstateAgent(BaseAgent):
                 "search_efh_buildings": _search_efh_buildings,
                 "analyze_parcel": _analyze_parcel,
                 "get_grundbuch_info": _get_grundbuch_info,
+                "send_telegram_rapport": _send_telegram_rapport,
+                "send_telegram_status": _send_telegram_status,
             },
         )
 
@@ -113,10 +166,13 @@ Umgebung: Mindestens 60% MFH im 200m Radius
 Topographie: Hangneigung < 15%, gut erschlossen
 
 Gehe systematisch vor:
-1. Suche EFH-Gebäude in jeder Gemeinde
-2. Analysiere die vielversprechendsten Parzellen (max. 5 pro Gemeinde)
-3. Für qualifizierte Parzellen: hole Grundbuch-Info
-4. Erstelle abschliessend einen übersichtlichen Report aller Funde
+1. Sende zuerst eine Telegram-Status-Meldung: "🔍 Parzellen-Suche gestartet in: {gemeinden_str}"
+2. Suche EFH-Gebäude in jeder Gemeinde
+3. Analysiere die vielversprechendsten Parzellen (max. 5 pro Gemeinde)
+4. Für jede qualifizierte Parzelle (qualifies=true): Sende Telegram-Rapport (Luftbild + GPS + Daten)
+5. Hole für qualifizierte Parzellen zusätzlich Grundbuch-Info
+6. Sende abschliessend eine Telegram-Status-Meldung mit Zusammenfassung (Anzahl Funde)
+7. Erstelle einen Abschluss-Report für den Terminal
 
 Priorisiere Parzellen mit dem höchsten Nachverdichtungs-Potenzial."""
 
