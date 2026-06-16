@@ -31,36 +31,13 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "// GWR API-URL sauber zusammenbauen (n8n-kompatibel)\nconst gemeinde    = $json.gemeinde;\nconst max_baujahr = $json.max_baujahr;\nconst where = `GGDENAME LIKE '${gemeinde}%' AND GKAT = 1021 AND GJAHR < ${max_baujahr}`;\nconst params = new URLSearchParams({\n  where,\n  outFields: 'EGID,STRNAME,DEINR,GKODE,GKODN,GJAHR,GKAT,GANZWHG',\n  resultRecordCount: '50',\n  f: 'json'\n});\nreturn [{ json: {\n  ...$json,\n  api_url: `https://api3.geo.admin.ch/rest/services/ech/MapServer/ch.bfs.gebaeude_wohnungs_register/query?${params}`\n}}];"
+        "jsCode": "// Overpass-Query für EFH-Gebäude in der Gemeinde aufbauen\nconst gemeinde = $json.gemeinde;\nconst query = `[out:json][timeout:60];\narea[\"name\"=\"${gemeinde}\"][\"boundary\"=\"administrative\"]->.city;\n(\n  way[\"building\"~\"^(house|detached|bungalow)$\"](area.city);\n  way[\"building\"=\"residential\"][\"building:levels\"~\"^[12]$\"](area.city);\n);\nout center tags;`;\nreturn [{ json: { ...$json, overpass_query: query } }];"
       },
-      "id": "n2b-build-url",
-      "name": "API-URL aufbauen",
+      "id": "n2b-build-query",
+      "name": "Overpass-Query aufbauen",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [520, 340]
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "={{ $json.api_url }}",
-        "options": {}
-      },
-      "id": "n3-gwr-query",
-      "name": "GWR Gebäude-Abfrage",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [740, 340]
-    },
-    {
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "// GWR Ergebnis parsen + LV95 → WGS84 Koordinaten umrechnen\nconst config = $('Konfiguration').first().json;\nconst features = $input.first().json.features || [];\n\nif (features.length === 0) {\n  return [{ json: { error: 'Keine EFH gefunden in ' + config.gemeinde } }];\n}\n\nreturn features.map(f => {\n  const p = f.properties;\n  \n  // Schweizer LV95 → WGS84 (Näherungsformel swisstopo)\n  const east = p.GKODE;\n  const north = p.GKODN;\n  const yy = (east  - 2600000) / 1000000;\n  const xx = (north - 1200000) / 1000000;\n  const lambda = 2.6779094 + 4.728982*yy + 0.791484*yy*xx + 0.1306*yy*xx*xx - 0.0436*yy*yy*yy;\n  const phi    = 16.9023892 + 3.238272*xx - 0.270978*yy*yy - 0.002528*xx*xx - 0.0447*yy*yy*xx - 0.0140*xx*xx*xx;\n  const lat = parseFloat((phi    * 100/36).toFixed(6));\n  const lng = parseFloat((lambda * 100/36).toFixed(6));\n  \n  // Bounding Box für Luftbild (±300m)\n  const dLat = 0.0027;\n  const dLng = 0.0040;\n  const bbox = `${lng-dLng},${lat-dLat},${lng+dLng},${lat+dLat}`;\n  \n  return { json: {\n    egid:       p.EGID,\n    address:    `${p.STRNAME || ''} ${p.DEINR || ''}`.trim(),\n    baujahr:    p.GJAHR,\n    lat,\n    lng,\n    bbox,\n    gemeinde:   config.gemeinde,\n    chat_id:    config.chat_id,\n    min_sqm:    config.min_sqm,\n    max_sqm:    config.max_sqm\n  }};\n});"
-      },
-      "id": "n4-parse-gwr",
-      "name": "GWR Parsen + Koordinaten",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [740, 340]
     },
     {
       "parameters": {
@@ -70,30 +47,68 @@
         "contentType": "form-urlencoded",
         "bodyParameters": {
           "parameters": [
-            {
-              "name": "data",
-              "value": "=[out:json];(way[\"building:levels\"~\"^[3-9]\"](around:200,{{ $json.lat }},{{ $json.lng }});relation[\"building:levels\"~\"^[3-9]\"](around:200,{{ $json.lat }},{{ $json.lng }}););out count;"
-            }
+            { "name": "data", "value": "={{ $json.overpass_query }}" }
           ]
         },
         "options": {}
       },
-      "id": "n5-overpass",
-      "name": "Overpass MFH-Prüfung",
+      "id": "n3-osm-search",
+      "name": "Gebäude-Suche (Overpass)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
+      "position": [740, 340]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Overpass-Ergebnis parsen – WGS84 direkt, keine Koordinaten-Umrechnung nötig\nconst config = $('Konfiguration').first().json;\nconst elements = $input.first().json.elements || [];\n\nif (elements.length === 0) {\n  return [{ json: { error: 'Keine Gebäude in ' + config.gemeinde + ' via OSM gefunden.' } }];\n}\n\n// Nur Gebäude mit Zentroid-Koordinaten\nconst buildings = elements.filter(e => e.center);\n\nreturn buildings.slice(0, 30).map(e => {\n  const lat  = e.center.lat;\n  const lng  = e.center.lon;\n  const tags = e.tags || {};\n\n  // Adresse aus OSM-Tags\n  const street = tags['addr:street']  || '';\n  const nr     = tags['addr:housenumber'] || '';\n  const address = [street, nr].filter(Boolean).join(' ') || `OSM-ID ${e.id}`;\n\n  // Baujahr (falls in OSM erfasst)\n  const baujahr = parseInt(tags['start_date'] || tags['year_of_construction'] || '0') || null;\n\n  // Bounding Box für Swisstopo Luftbild (±300m)\n  const dLat = 0.0027;\n  const dLng = 0.0040;\n  const bbox = `${lng-dLng},${lat-dLat},${lng+dLng},${lat+dLat}`;\n\n  return { json: {\n    osm_id:   e.id,\n    address,\n    baujahr,\n    lat,\n    lng,\n    bbox,\n    building_type: tags.building || '—',\n    gemeinde: config.gemeinde,\n    chat_id:  config.chat_id,\n    min_sqm:  config.min_sqm,\n    max_sqm:  config.max_sqm\n  }};\n});"
+      },
+      "id": "n4-parse-buildings",
+      "name": "Gebäude Parsen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [960, 340]
     },
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "// MFH-Anteil berechnen + Parzelle bewerten\nconst prev = $input.item.json;\nconst elements = prev.elements || [];\nconst mfh_count = parseInt(elements[0]?.tags?.total || 0);\n\n// Näherung: 10 MFH-Gebäude im 200m-Umkreis = 100%\nconst mfh_ratio = Math.min(mfh_count / 8, 1);\nconst mfh_ratio_pct = Math.round(mfh_ratio * 100);\nconst qualifies_mfh = mfh_ratio >= 0.6;\n\nreturn [{ json: {\n  ...prev,\n  mfh_count,\n  mfh_ratio_pct,\n  qualifies_mfh\n}}];"
+        "jsCode": "// Overpass-Query für MFH im 200m-Umkreis aufbauen\nconst lat = $json.lat;\nconst lng = $json.lng;\nconst query = `[out:json][timeout:30];\n(\n  way[\"building:levels\"~\"^[3-9]\"](around:200,${lat},${lng});\n  relation[\"building:levels\"~\"^[3-9]\"](around:200,${lat},${lng});\n  way[\"building\"=\"apartments\"](around:200,${lat},${lng});\n);\nout count;`;\nreturn [{ json: { ...$json, mfh_query: query } }];"
+      },
+      "id": "n4b-build-mfh-query",
+      "name": "MFH-Query aufbauen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1180, 340]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://overpass-api.de/api/interpreter",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "data", "value": "={{ $json.mfh_query }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n5-overpass-mfh",
+      "name": "Overpass MFH-Prüfung",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 340]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// MFH-Anteil berechnen\nconst elements = $json.elements || [];\nconst mfh_count = parseInt(elements[0]?.tags?.total || 0);\nconst mfh_ratio = Math.min(mfh_count / 8, 1);\nconst mfh_ratio_pct = Math.round(mfh_ratio * 100);\nconst qualifies_mfh = mfh_ratio >= 0.6;\nreturn [{ json: { ...$input.item.json, mfh_count, mfh_ratio_pct, qualifies_mfh } }];"
       },
       "id": "n6-calc-mfh",
       "name": "MFH-Anteil berechnen",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1180, 340]
+      "position": [1620, 340]
     },
     {
       "parameters": {
@@ -114,30 +129,7 @@
       "name": "MFH ≥ 60%?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1400, 340]
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "=https://api3.geo.admin.ch/rest/services/height?easting={{ $json.lng }}&northing={{ $json.lat }}&sr=4326",
-        "options": {}
-      },
-      "id": "n8-slope",
-      "name": "Höhenprofil (Hangneigung)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1620, 200]
-    },
-    {
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "// Hangneigung prüfen (vereinfacht via Höhendifferenz)\n// Die Swisstopo-API gibt die Höhe zurück; Neigung schätzen wir als OK wenn keine extremen Werte\nconst prev = $input.item.json;\nconst height = $json.height || 0;\n\n// Vereinfacht: Akzeptiert wenn Höhe zwischen 400-900m (typisch Mittelland Bern)\n// Echte Hangneigung würde mehrere Punkte brauchen\nconst slope_ok = height > 400 && height < 900;\nconst slope_percent = 5; // Platzhalter - für genaue Berechnung mehrere API-Calls nötig\n\nreturn [{ json: {\n  ...prev,\n  height_m: height,\n  slope_percent,\n  slope_ok\n}}];"
-      },
-      "id": "n9-check-slope",
-      "name": "Hangneigung prüfen",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1840, 200]
+      "position": [1840, 340]
     },
     {
       "parameters": {
@@ -151,7 +143,7 @@
           }
         }
       },
-      "id": "n10-aerial",
+      "id": "n8-aerial",
       "name": "Swisstopo Luftbild laden",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -160,9 +152,9 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "// Telegram-Rapport formatieren\nconst item = $input.item.json;\n\nconst report = [\n  '🏠 *PARZELLEN-ANALYSE – KANTON BERN*',\n  '━━━━━━━━━━━━━━━━━━━━━━━',\n  '',\n  `📍 *${item.address || 'Adresse unbekannt'}*`,\n  `Gemeinde: ${item.gemeinde}`,\n  `Koordinaten: \\`${item.lat}, ${item.lng}\\``,\n  '',\n  '*🏗 GEBÄUDE*',\n  `• Baujahr: ${item.baujahr || '—'}`,\n  '',\n  '*🏙 UMGEBUNG*',\n  `• MFH-Anteil (200m): ${item.mfh_ratio_pct}%  ✅`,\n  `• MFH-Gebäude: ${item.mfh_count}`,\n  `• Höhenlage: ${item.height_m}m ü.M.`,\n  '',\n  '*📈 ENTWICKLUNGSPOTENZIAL*',\n  '🟢 *Parzelle qualifiziert – für Off-Market Ansatz geeignet*',\n  '',\n  '*🔑 EIGENTÜMER-ABFRAGE*',\n  '[Grundbuch Kanton Bern öffnen](https://www.grundbuch.apps.be.ch)',\n  '[Karte Kanton Bern](https://www.map.apps.be.ch)',\n  '',\n  '_→ Direktkontakt mit Eigentümer empfohlen (Off-Market)_'\n].join('\\n');\n\nreturn [{ json: { ...item, telegram_report: report } }];"
+        "jsCode": "// Telegram-Rapport formatieren\nconst item = $input.item.json;\nconst baujahr_text = item.baujahr ? item.baujahr : 'unbekannt (OSM)';\nconst mfh_icon = item.qualifies_mfh ? '✅' : '⚠️';\n\nconst report = [\n  '🏠 *PARZELLEN-ANALYSE – KANTON BERN*',\n  '━━━━━━━━━━━━━━━━━━━━━━━',\n  '',\n  `📍 *${item.address}*`,\n  `Gemeinde: ${item.gemeinde}`,\n  `Koordinaten: \\`${item.lat}, ${item.lng}\\``,\n  `OSM-ID: ${item.osm_id}`,\n  '',\n  '*🏗 GEBÄUDE*',\n  `• Typ: ${item.building_type}`,\n  `• Baujahr: ${baujahr_text}`,\n  '',\n  '*🏙 UMGEBUNG*',\n  `• MFH-Gebäude (200m): ${item.mfh_count}  ${mfh_icon}`,\n  `• MFH-Anteil: ${item.mfh_ratio_pct}%`,\n  '',\n  '*📈 ENTWICKLUNGSPOTENZIAL*',\n  '🟢 *Qualifiziert – Off-Market Ansatz empfohlen*',\n  '',\n  '*🔑 EIGENTÜMER-ABFRAGE*',\n  '[Grundbuch Kanton Bern](https://www.grundbuch.apps.be.ch)',\n  '[Parzelle auf map.geo.admin.ch](https://map.geo.admin.ch/?lang=de)',\n  '',\n  '_→ Direkt Eigentümer kontaktieren (Off-Market)_'\n].join('\\n');\n\nreturn [{ json: { ...item, telegram_report: report } }];"
       },
-      "id": "n11-format-report",
+      "id": "n9-format-report",
       "name": "Rapport formatieren",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -176,11 +168,11 @@
         "binaryData": true,
         "binaryProperty": "data",
         "additionalFields": {
-          "caption": "=📍 *{{ $json.address }}* | {{ $json.gemeinde }}\nSwisstopo Luftbild – Baujahr {{ $json.baujahr }}",
+          "caption": "=📍 *{{ $json.address }}* – {{ $json.gemeinde }}\nSwisstopo Luftbild | MFH-Anteil: {{ $json.mfh_ratio_pct }}%",
           "parse_mode": "Markdown"
         }
       },
-      "id": "n12-tg-photo",
+      "id": "n10-tg-photo",
       "name": "Telegram – Luftbild",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -192,10 +184,10 @@
         "resource": "message",
         "operation": "sendLocation",
         "chatId": "={{ $json.chat_id }}",
-        "latitude": "={{ $json.lat }}",
+        "latitude":  "={{ $json.lat }}",
         "longitude": "={{ $json.lng }}"
       },
-      "id": "n13-tg-location",
+      "id": "n11-tg-location",
       "name": "Telegram – GPS-Pin",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -210,7 +202,7 @@
         "text": "={{ $json.telegram_report }}",
         "additionalFields": { "parse_mode": "Markdown" }
       },
-      "id": "n14-tg-report",
+      "id": "n12-tg-report",
       "name": "Telegram – Rapport",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
@@ -219,11 +211,11 @@
     },
     {
       "parameters": {},
-      "id": "n15-noop",
+      "id": "n13-noop",
       "name": "Nicht qualifiziert",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [1620, 480]
+      "position": [2060, 480]
     }
   ],
   "connections": {
@@ -231,15 +223,18 @@
       "main": [[{ "node": "Konfiguration", "type": "main", "index": 0 }]]
     },
     "Konfiguration": {
-      "main": [[{ "node": "API-URL aufbauen", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Overpass-Query aufbauen", "type": "main", "index": 0 }]]
     },
-    "API-URL aufbauen": {
-      "main": [[{ "node": "GWR Gebäude-Abfrage", "type": "main", "index": 0 }]]
+    "Overpass-Query aufbauen": {
+      "main": [[{ "node": "Gebäude-Suche (Overpass)", "type": "main", "index": 0 }]]
     },
-    "GWR Gebäude-Abfrage": {
-      "main": [[{ "node": "GWR Parsen + Koordinaten", "type": "main", "index": 0 }]]
+    "Gebäude-Suche (Overpass)": {
+      "main": [[{ "node": "Gebäude Parsen", "type": "main", "index": 0 }]]
     },
-    "GWR Parsen + Koordinaten": {
+    "Gebäude Parsen": {
+      "main": [[{ "node": "MFH-Query aufbauen", "type": "main", "index": 0 }]]
+    },
+    "MFH-Query aufbauen": {
       "main": [[{ "node": "Overpass MFH-Prüfung", "type": "main", "index": 0 }]]
     },
     "Overpass MFH-Prüfung": {
@@ -250,15 +245,9 @@
     },
     "MFH ≥ 60%?": {
       "main": [
-        [{ "node": "Höhenprofil (Hangneigung)", "type": "main", "index": 0 }],
-        [{ "node": "Nicht qualifiziert",        "type": "main", "index": 0 }]
+        [{ "node": "Swisstopo Luftbild laden", "type": "main", "index": 0 }],
+        [{ "node": "Nicht qualifiziert",       "type": "main", "index": 0 }]
       ]
-    },
-    "Höhenprofil (Hangneigung)": {
-      "main": [[{ "node": "Hangneigung prüfen", "type": "main", "index": 0 }]]
-    },
-    "Hangneigung prüfen": {
-      "main": [[{ "node": "Swisstopo Luftbild laden", "type": "main", "index": 0 }]]
     },
     "Swisstopo Luftbild laden": {
       "main": [[{ "node": "Rapport formatieren", "type": "main", "index": 0 }]]
