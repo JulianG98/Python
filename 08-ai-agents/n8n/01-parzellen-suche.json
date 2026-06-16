@@ -30,15 +30,26 @@
     },
     {
       "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// GWR API-URL sauber zusammenbauen (n8n-kompatibel)\nconst gemeinde    = $json.gemeinde;\nconst max_baujahr = $json.max_baujahr;\nconst where = `GGDENAME LIKE '${gemeinde}%' AND GKAT = 1021 AND GJAHR < ${max_baujahr}`;\nconst params = new URLSearchParams({\n  where,\n  outFields: 'EGID,STRNAME,DEINR,GKODE,GKODN,GJAHR,GKAT,GANZWHG',\n  resultRecordCount: '50',\n  f: 'json'\n});\nreturn [{ json: {\n  ...$json,\n  api_url: `https://api3.geo.admin.ch/rest/services/ech/MapServer/ch.bfs.gebaeude_wohnungs_register/query?${params}`\n}}];"
+      },
+      "id": "n2b-build-url",
+      "name": "API-URL aufbauen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 340]
+    },
+    {
+      "parameters": {
         "method": "GET",
-        "url": "=https://api3.geo.admin.ch/rest/services/ech/MapServer/ch.bfs.gebaeude_wohnungs_register/query?where=GGDENAME+LIKE+%27{{ encodeURIComponent($json.gemeinde) }}%25%27+AND+GKAT+%3D+1021+AND+GJAHR+%3C+{{ $json.max_baujahr }}&outFields=EGID,STRNAME,DEINR,GKODE,GKODN,GJAHR,GKAT,GANZWHG&resultRecordCount=50&f=json",
+        "url": "={{ $json.api_url }}",
         "options": {}
       },
       "id": "n3-gwr-query",
       "name": "GWR Gebäude-Abfrage",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [520, 340]
+      "position": [740, 340]
     },
     {
       "parameters": {
@@ -220,6 +231,9 @@
       "main": [[{ "node": "Konfiguration", "type": "main", "index": 0 }]]
     },
     "Konfiguration": {
+      "main": [[{ "node": "API-URL aufbauen", "type": "main", "index": 0 }]]
+    },
+    "API-URL aufbauen": {
       "main": [[{ "node": "GWR Gebäude-Abfrage", "type": "main", "index": 0 }]]
     },
     "GWR Gebäude-Abfrage": {
