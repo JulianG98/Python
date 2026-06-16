@@ -1,0 +1,230 @@
+{
+  "name": "02 - Content-Produktion (Higgsfield + Telegram)",
+  "nodes": [
+    {
+      "parameters": {
+        "formFields": {
+          "values": [
+            { "fieldLabel": "Thema",       "fieldType": "text",    "requiredField": true  },
+            { "fieldLabel": "Content-Typ", "fieldType": "dropdown","requiredField": true,
+              "fieldOptions": { "values": [
+                { "option": "video" },
+                { "option": "image" }
+              ]}
+            },
+            { "fieldLabel": "Caption",     "fieldType": "textarea","requiredField": false }
+          ]
+        }
+      },
+      "id": "cp1-form",
+      "name": "Content Auftrag",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [100, 340],
+      "webhookId": "content-form-trigger"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "d1", "name": "chat_id",         "value": "5547810016", "type": "string" },
+            { "id": "d2", "name": "higgsfield_key",  "value": "",           "type": "string" },
+            { "id": "d3", "name": "thema",           "value": "={{ $json.Thema }}",       "type": "string" },
+            { "id": "d4", "name": "content_typ",     "value": "={{ $json['Content-Typ'] }}", "type": "string" },
+            { "id": "d5", "name": "caption_input",   "value": "={{ $json.Caption || '' }}",  "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cp2-config",
+      "name": "Konfiguration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [340, 340]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "=⏳ *Content-Produktion gestartet*\n\nThema: {{ $json.thema }}\nTyp: {{ $json.content_typ }}\n\n_Higgsfield generiert..._",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "cp3-tg-start",
+      "name": "Telegram – Start-Meldung",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [560, 340],
+      "credentials": { "telegramApi": { "id": "", "name": "Telegram Bot" } }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Higgsfield Prompt generieren\nconst thema = $json.thema;\nconst typ = $json.content_typ;\n\nlet prompt = '';\nif (typ === 'video') {\n  prompt = `Cinematic ${thema} scene, professional quality, smooth camera movement, 4K resolution, photorealistic, golden hour lighting, Swiss landscape aesthetic`;\n} else {\n  prompt = `Professional photograph of ${thema}, high resolution, commercial quality, clean composition, Swiss quality aesthetic, bright and modern`;\n}\n\nreturn [{ json: { ...$json, higgsfield_prompt: prompt } }];"
+      },
+      "id": "cp4-prompt",
+      "name": "Higgsfield Prompt erstellen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [780, 340]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "cond-typ",
+              "leftValue": "={{ $json.content_typ }}",
+              "rightValue": "video",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "cp5-if-typ",
+      "name": "Video oder Bild?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, 340]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.higgsfield.ai/v1/generate/video",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $json.higgsfield_key }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: $json.higgsfield_prompt, duration: 6, aspect_ratio: '9:16' }) }}",
+        "options": {}
+      },
+      "id": "cp6-video-gen",
+      "name": "Higgsfield – Video generieren",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1220, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.higgsfield.ai/v1/generate/image",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $json.higgsfield_key }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: $json.higgsfield_prompt, aspect_ratio: '1:1' }) }}",
+        "options": {}
+      },
+      "id": "cp7-image-gen",
+      "name": "Higgsfield – Bild generieren",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1220, 480]
+    },
+    {
+      "parameters": {
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "cp8-wait-video",
+      "name": "Warten (Video 30s)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1440, 200],
+      "webhookId": "wait-video"
+    },
+    {
+      "parameters": {
+        "amount": 15,
+        "unit": "seconds"
+      },
+      "id": "cp9-wait-image",
+      "name": "Warten (Bild 15s)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1440, 480],
+      "webhookId": "wait-image"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Job-Ergebnis verarbeiten + Caption generieren\nconst result = $json;\nconst config = $input.item.json;\n\n// Media URL aus Higgsfield Antwort extrahieren\nconst media_url = result.url || result.video_url || result.image_url || result.output || '';\nconst job_id    = result.id || result.job_id || '';\n\n// Caption erstellen\nconst thema = config.thema || '';\nconst custom_caption = config.caption_input || '';\nconst auto_caption = [\n  custom_caption || `✨ ${thema}`,\n  '',\n  '#Schweiz #Immobilien #Investment #RealEstate #KantonBern',\n  '#Entwicklung #Nachverdichtung #Architektur #Swiss'\n].join('\\n');\n\nreturn [{ json: {\n  ...config,\n  media_url,\n  job_id,\n  caption: auto_caption\n}}];"
+      },
+      "id": "cp10-process",
+      "name": "Ergebnis verarbeiten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, 340]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "=✅ *Content fertig!*\n\nThema: {{ $json.thema }}\nTyp: {{ $json.content_typ }}\n\n🔗 [Media-URL öffnen]({{ $json.media_url }})\n\n📝 *Caption für Instagram:*\n{{ $json.caption }}\n\n_Job-ID: {{ $json.job_id }}_",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "cp11-tg-done",
+      "name": "Telegram – Fertig-Meldung",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1880, 340],
+      "credentials": { "telegramApi": { "id": "", "name": "Telegram Bot" } }
+    }
+  ],
+  "connections": {
+    "Content Auftrag": {
+      "main": [[{ "node": "Konfiguration", "type": "main", "index": 0 }]]
+    },
+    "Konfiguration": {
+      "main": [[{ "node": "Telegram – Start-Meldung", "type": "main", "index": 0 }]]
+    },
+    "Telegram – Start-Meldung": {
+      "main": [[{ "node": "Higgsfield Prompt erstellen", "type": "main", "index": 0 }]]
+    },
+    "Higgsfield Prompt erstellen": {
+      "main": [[{ "node": "Video oder Bild?", "type": "main", "index": 0 }]]
+    },
+    "Video oder Bild?": {
+      "main": [
+        [{ "node": "Higgsfield – Video generieren", "type": "main", "index": 0 }],
+        [{ "node": "Higgsfield – Bild generieren",  "type": "main", "index": 0 }]
+      ]
+    },
+    "Higgsfield – Video generieren": {
+      "main": [[{ "node": "Warten (Video 30s)", "type": "main", "index": 0 }]]
+    },
+    "Higgsfield – Bild generieren": {
+      "main": [[{ "node": "Warten (Bild 15s)", "type": "main", "index": 0 }]]
+    },
+    "Warten (Video 30s)": {
+      "main": [[{ "node": "Ergebnis verarbeiten", "type": "main", "index": 0 }]]
+    },
+    "Warten (Bild 15s)": {
+      "main": [[{ "node": "Ergebnis verarbeiten", "type": "main", "index": 0 }]]
+    },
+    "Ergebnis verarbeiten": {
+      "main": [[{ "node": "Telegram – Fertig-Meldung", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": [{ "name": "Content" }]
+}
