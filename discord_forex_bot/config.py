@@ -1,20 +1,25 @@
 # ==============================================================
 #  Discord Forex Bot - Konfiguration
-#  Alle Einstellungen hier anpassen, bevor der Bot gestartet wird
+#  Secrets werden aus der .env Datei geladen (niemals in Git!)
 # ==============================================================
 
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # --- Discord ---
-DISCORD_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"   # Bot-Token vom Discord Developer Portal
-CHANNEL_ID        = 123456789               # Rechtsklick auf #forex-midrisk -> ID kopieren
-SIGNAL_AUTHOR     = "VTA_harun"             # Nur Nachrichten von diesem User werden verarbeitet
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
+CHANNEL_ID        = int(os.getenv("CHANNEL_ID", "0"))
+SIGNAL_AUTHOR     = os.getenv("SIGNAL_AUTHOR", "VTA_harun")
 
 # --- MetaTrader 5 ---
-MT5_LOGIN    = 12345678            # Kontonummer
-MT5_PASSWORD = "your_mt5_password"
-MT5_SERVER   = "YourBroker-Server" # z.B. "Pepperstone-Demo" oder "ICMarkets-Live01"
+MT5_LOGIN    = int(os.getenv("MT5_LOGIN", "0"))
+MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
+MT5_SERVER   = os.getenv("MT5_SERVER", "")
 
 # --- Risiko-Management ---
-RISK_PERCENT = 1.0   # Risiko pro Trade in % des Kontostands (z.B. 1.0 = 1%)
+RISK_PERCENT = float(os.getenv("RISK_PERCENT", "1.0"))
 
 # --- Bot-Identifikation (nicht ändern) ---
-BOT_MAGIC_NUMBER = 999001  # Eindeutige Nummer für alle Orders dieses Bots
+BOT_MAGIC_NUMBER = 999001
