@@ -10,7 +10,7 @@ load_dotenv()
 
 # --- Discord ---
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
-CHANNEL_ID        = int(os.getenv("CHANNEL_ID", "0"))
+CHANNEL_IDS       = [int(x) for x in os.getenv("CHANNEL_IDS", "0").split(",") if x.strip()]
 SIGNAL_AUTHOR     = os.getenv("SIGNAL_AUTHOR", "VTA_harun")
 
 # --- MetaTrader 5 ---

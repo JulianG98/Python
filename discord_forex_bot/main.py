@@ -15,7 +15,7 @@ from logging.handlers import RotatingFileHandler
 import discord
 
 import mt5_trader
-from config import CHANNEL_ID, DISCORD_BOT_TOKEN, SIGNAL_AUTHOR
+from config import CHANNEL_IDS, DISCORD_BOT_TOKEN, SIGNAL_AUTHOR
 from signal_parser import parse_signal, parse_update
 
 # ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ client = discord.Client(intents=intents)
 @client.event
 async def on_ready():
     logger.info(f"Discord Bot verbunden als: {client.user}")
-    logger.info(f"Überwache Channel-ID: {CHANNEL_ID} | Autor: {SIGNAL_AUTHOR}")
+    logger.info(f"Überwache {len(CHANNEL_IDS)} Channel(s): {CHANNEL_IDS} | Autor: {SIGNAL_AUTHOR}")
 
     loop = asyncio.get_event_loop()
     ok = await loop.run_in_executor(None, mt5_trader.connect)
@@ -61,8 +61,8 @@ async def on_ready():
 
 @client.event
 async def on_message(message: discord.Message):
-    # Nur den konfigurierten Channel und Autor verarbeiten
-    if message.channel.id != CHANNEL_ID:
+    # Nur konfigurierte Channels und Autor verarbeiten
+    if message.channel.id not in CHANNEL_IDS:
         return
     if message.author.name != SIGNAL_AUTHOR:
         return
