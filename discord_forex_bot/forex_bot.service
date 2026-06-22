@@ -1,0 +1,25 @@
+# Systemd Service - Bot automatisch beim VPS-Start starten
+# Installieren:
+#   sudo cp forex_bot.service /etc/systemd/system/
+#   sudo systemctl enable forex_bot
+#   sudo systemctl start forex_bot
+#
+# Logs anzeigen:
+#   sudo journalctl -u forex_bot -f
+
+[Unit]
+Description=Discord Forex Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/discord_forex_bot
+ExecStart=/bin/bash /root/discord_forex_bot/start_bot.sh
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
